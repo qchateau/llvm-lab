@@ -71,6 +71,8 @@ class LLVMLabApp(App):
         self.selected_plugins = []
         self.manifest = self.load_manifest()
         self.project_root = Path(__file__).parent.resolve()
+        self._is_refreshing = False
+        self._first_load = True
 
     def update_compile_commands(self, file_path, command):
         compdb_path = self.project_root / "compile_commands.json"
@@ -115,14 +117,12 @@ class LLVMLabApp(App):
     def compose(self) -> ComposeResult:
         yield Header()
         with Vertical(id="sidebar"):
+            yield Label("SELECTED SOURCE:", classes="section-label")
+            yield Label("None", id="selected-source-label")
             yield Label("SOURCES (code/)", classes="section-label")
             yield DirectoryTree("code/", id="source-tree")
             yield Label("PLUGINS (plugins/)", classes="section-label")
-            plugin_options = [
-                (p.name, str(p), False) 
-                for p in Path("plugins").glob("*.cpp")
-            ]
-            yield SelectionList(*plugin_options, id="plugin-list")
+            yield SelectionList(id="plugin-list")
             
         with Vertical(id="main-content"):
             with Vertical(id="controls"):
@@ -143,16 +143,60 @@ class LLVMLabApp(App):
     def handle_file_selection(self, event: DirectoryTree.FileSelected) -> None:
         if event.path.suffix in (".cpp", ".c"):
             self.selected_source = event.path
+            self.query_one("#selected-source-label", Label).update(f"[bold cyan]{event.path.name}[/bold cyan]")
             self.log_message(f"[green]Selected source:[/green] {event.path.name}")
 
     @on(SelectionList.SelectedChanged)
     def handle_plugin_selection(self, event: SelectionList.SelectedChanged) -> None:
         self.selected_plugins = [Path(p) for p in event.selection_list.selected]
-        self.log_message(f"[green]Selected plugins:[/green] {', '.join(p.name for p in self.selected_plugins)}")
+        if not self._is_refreshing:
+            self.log_message(f"[green]Selected plugins:[/green] {', '.join(p.name for p in self.selected_plugins)}")
 
     @on(Button.Pressed, "#run-btn")
     def action_run_opt(self) -> None:
         self.run_process()
+
+    def on_mount(self) -> None:
+        self.refresh_files()
+        self.set_interval(2.0, self.refresh_files)
+
+    def refresh_files(self) -> None:
+        # Refresh DirectoryTree
+        try:
+            tree = self.query_one("#source-tree", DirectoryTree)
+            tree.reload()
+        except:
+            pass
+
+        # Refresh SelectionList (Plugins)
+        try:
+            self._is_refreshing = True
+            plugin_list = self.query_one("#plugin-list", SelectionList)
+            
+            files = sorted(Path("plugins").glob("*.cpp"))
+            
+            # Optimization: only refresh if the list of files changed or first load
+            current_files = set(str(opt.value) for opt in plugin_list._options)
+            new_files = set(str(p) for p in files)
+            
+            if current_files != new_files or self._first_load:
+                new_options = []
+                current_selected_vals = set(str(p) for p in self.selected_plugins)
+                
+                for p in files:
+                    val = str(p)
+                    # On first load, select all. Otherwise, preserve selection.
+                    is_selected = True if self._first_load else val in current_selected_vals
+                    new_options.append((p.name, val, is_selected))
+                
+                plugin_list.clear_options()
+                plugin_list.add_options(new_options)
+                
+                if self._first_load:
+                    self.selected_plugins = files
+                    self._first_load = False
+        finally:
+            self._is_refreshing = False
 
     def log_message(self, message: str):
         log_view = self.query_one("#log-view", RichLog)

@@ -5,10 +5,10 @@
 using namespace llvm;
 
 namespace {
-struct ExamplePass : public PassInfoMixin<ExamplePass> {
+struct PrintModule : public PassInfoMixin<PrintModule> {
     PreservedAnalyses run(Module& M, ModuleAnalysisManager&)
     {
-        errs() << "ExamplePass running on module: " << M.getName() << "\n";
+        errs() << "PrintModule running on module: " << M.getName() << "\n";
         return PreservedAnalyses::all();
     }
 };
@@ -18,12 +18,12 @@ extern "C" LLVM_ATTRIBUTE_WEAK ::llvm::PassPluginLibraryInfo llvmGetPassPluginIn
 {
     return {
         LLVM_PLUGIN_API_VERSION,
-        "ExamplePlugin",
+        "PrintModule",
         "v0.1",
         [](PassBuilder& PB) {
             PB.registerPipelineStartEPCallback(
                 [](ModulePassManager& MPM, OptimizationLevel Level) {
-                    MPM.addPass(ExamplePass());
+                    MPM.addPass(PrintModule());
                 });
         },
     };
