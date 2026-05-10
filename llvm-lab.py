@@ -245,12 +245,12 @@ class LLVMLabApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "run_opt", "Run Optimization"),
-        Binding("space", "none", "Toggle Pass"),
+        Binding("space", "toggle_pass", "Toggle Pass"),
         Binding("ctrl+up", "move_up", "Move Pass Up"),
         Binding("ctrl+down", "move_down", "Move Pass Down"),
     ]
 
-    def action_toggle_pass(self, event) -> None:
+    def action_toggle_pass(self) -> None:
         tree = self.query_one("#pipeline-tree", Tree)
         node = tree.cursor_node
         if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
@@ -260,7 +260,6 @@ class LLVMLabApp(App):
                 node.label = Text(label, style="dim")
             else:
                 node.label = Text(label)
-            event.stop()
 
     def __init__(self):
         super().__init__()
@@ -463,7 +462,12 @@ class LLVMLabApp(App):
 
     def on_key(self, event) -> None:
         if event.key == "space":
-            self.action_toggle_pass(event)
+            self.action_toggle_pass()
+        elif event.key == "ctrl+up":
+            self.handle_move_up()
+        elif event.key == "ctrl+down":
+            self.handle_move_down()
+
 
     @on(Button.Pressed, "#move-up-btn")
     def handle_move_up(self) -> None:
@@ -553,15 +557,25 @@ class LLVMLabApp(App):
         tree = self.query_one("#pipeline-tree", Tree)
         node = tree.cursor_node
         pass_name = self.query_one("#new-pass-name", Input).value
-        if node and pass_name:
-            # Add as child if node is a manager, or sibling if not
-            target_node = (
-                node if node.data.children or node == tree.root else node.parent
-            )
-            if target_node and target_node.data:
-                target_node.data.children.append(PipelineNode(pass_name))
-                self.rebuild_node(target_node)
-                self.query_one("#new-pass-name", Input).value = ""
+        
+        if node and node.parent and node.parent.data and pass_name:
+            # Insert after the currently selected node
+            parent_node = node.parent
+            children = parent_node.data.children
+            try:
+                idx = children.index(node.data)
+                parent_node.data.children.insert(idx + 1, PipelineNode(pass_name))
+            except ValueError:
+                # Fallback if node not found in children
+                parent_node.data.children.append(PipelineNode(pass_name))
+            
+            self.rebuild_node(parent_node)
+            self.query_one("#new-pass-name", Input).value = ""
+        elif tree.root.data and pass_name:
+            # Add to root if nothing else is valid
+            tree.root.data.children.append(PipelineNode(pass_name))
+            self.rebuild_node(tree.root)
+            self.query_one("#new-pass-name", Input).value = ""
 
     @on(Button.Pressed, "#modify-pass-btn")
     def handle_modify_pass(self) -> None:
