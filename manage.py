@@ -132,8 +132,13 @@ class PipelineEditor(Vertical):
 
     def build_tree(self, tree_node, pipe_node):
         tree_node.data = pipe_node
-        label = f"{'[x]' if pipe_node.enabled else '[ ]'} {pipe_node.name}{pipe_node.params}"
-        tree_node.label = label
+        # Use dim styling for disabled nodes, normal for enabled
+        label = f"{pipe_node.name}{pipe_node.params}"
+        if not pipe_node.enabled:
+            tree_node.label = Text(label, style="dim")
+        else:
+            tree_node.label = Text(label)
+
         tree_node.allow_expand = False
         for child in pipe_node.children:
             new_tree_node = tree_node.add(child.name, data=child)
@@ -241,7 +246,28 @@ class LLVMLabApp(App):
     BINDINGS = [
         Binding("q", "quit", "Quit"),
         Binding("r", "run_opt", "Run Optimization"),
+        Binding("space", "none", "Toggle Pass"),
+        Binding("ctrl+up", "move_up", "Move Pass Up"),
+        Binding("ctrl+down", "move_down", "Move Pass Down"),
     ]
+
+    def action_toggle_pass(self, event) -> None:
+        tree = self.query_one("#pipeline-tree", Tree)
+        node = tree.cursor_node
+        if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
+            node.data.enabled = not node.data.enabled
+            label = f"{node.data.name}{node.data.params}"
+            if not node.data.enabled:
+                node.label = Text(label, style="dim")
+            else:
+                node.label = Text(label)
+            event.stop()
+
+    def action_move_up(self) -> None:
+        self.handle_move_up()
+
+    def action_move_down(self) -> None:
+        self.handle_move_down()
 
     def __init__(self):
         super().__init__()
@@ -407,25 +433,13 @@ class LLVMLabApp(App):
     @on(Tree.NodeSelected)
     def handle_node_selected(self, event: Tree.NodeSelected) -> None:
         node = event.node
-        if node and hasattr(node, 'data') and isinstance(node.data, PipelineNode):
+        if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
             # Populate input with node name for potential modification
             self.query_one("#new-pass-name", Input).value = node.data.name
 
     def on_key(self, event) -> None:
         if event.key == "space":
-            tree = self.query_one("#pipeline-tree", Tree)
-            node = tree.cursor_node
-            if node and hasattr(node, 'data') and isinstance(node.data, PipelineNode):
-                node.data.enabled = not node.data.enabled
-                label = f"{'[x]' if node.data.enabled else '[ ]'} {node.data.name}{node.data.params}"
-                node.label = label
-                event.stop()
-        elif event.key == "ctrl+up":
-            self.handle_move_up()
-            event.stop()
-        elif event.key == "ctrl+down":
-            self.handle_move_down()
-            event.stop()
+            self.action_toggle_pass(event)
 
     @on(Button.Pressed, "#move-up-btn")
     def handle_move_up(self) -> None:
@@ -443,16 +457,20 @@ class LLVMLabApp(App):
                 # Rebuild and select
                 target = node.data
                 self.rebuild_node(node.parent)
-                
+
                 def restore_selection():
                     tree = self.query_one("#pipeline-tree", Tree)
+
                     # Traverse to find the new node that matches target
                     def find_node(n):
-                        if n.data is target: return n
+                        if n.data is target:
+                            return n
                         for c in n.children:
                             res = find_node(c)
-                            if res: return res
+                            if res:
+                                return res
                         return None
+
                     new_node = find_node(tree.root)
                     if new_node:
                         tree.select_node(new_node)
@@ -476,16 +494,20 @@ class LLVMLabApp(App):
                 # Rebuild and select
                 target = node.data
                 self.rebuild_node(node.parent)
-                
+
                 def restore_selection():
                     tree = self.query_one("#pipeline-tree", Tree)
+
                     # Traverse to find the new node that matches target
                     def find_node(n):
-                        if n.data is target: return n
+                        if n.data is target:
+                            return n
                         for c in n.children:
                             res = find_node(c)
-                            if res: return res
+                            if res:
+                                return res
                         return None
+
                     new_node = find_node(tree.root)
                     if new_node:
                         tree.select_node(new_node)
