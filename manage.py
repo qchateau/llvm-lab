@@ -482,10 +482,13 @@ class LLVMLabApp(App):
             plugin_libs.append(lib)
 
         # 3. Run Opt
-        await self.run_opt(ir_file, plugin_libs, opt_pipeline)
+        res = await self.run_opt(ir_file, plugin_libs, opt_pipeline)
         
-        self.save_manifest()
-        self.log_message("[bold green]Workflow completed successfully![/bold green]")
+        if res:
+            self.save_manifest()
+            self.log_message("[bold green]Workflow completed successfully![/bold green]")
+            # Ensure tab switch happens here as well if needed
+            self.call_after_refresh(lambda: setattr(self.query_one("#main-tabs", TabbedContent), "active", "ir-tab"))
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
@@ -541,19 +544,15 @@ class LLVMLabApp(App):
         cmd.append(f"-passes={pipeline}")
         cmd.extend([str(ir_file), "-S", "-o", str(out_path)])
         
-        if await self.exec_cmd(cmd):
+        # We explicitly set log_stdout=False here to suppress IR output
+        if await self.exec_cmd(cmd, log_stdout=False):
             content = out_path.read_text()
             ir_view = self.query_one("#ir-view", Static)
             ir_view.update(Syntax(content, "llvm", theme="monokai", line_numbers=True))
-            # Switch to IR tab on success
-            try:
-                self.query_one("#main-tabs", TabbedContent).active = "ir-tab"
-            except:
-                pass
             return out_path
         return None
 
-    async def exec_cmd(self, cmd):
+    async def exec_cmd(self, cmd, log_stdout=True):
         self.log_message(f"[dim]Exec: {' '.join(cmd)}[/dim]")
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -562,9 +561,10 @@ class LLVMLabApp(App):
         )
         stdout, stderr = await proc.communicate()
         
-        if stdout:
+        if stdout and log_stdout:
             self.log_message(stdout.decode())
-        if stderr:
+        if stderr and log_stdout:
+            # Only show stderr if it's not the IR itself being misdirected
             self.log_message(f"[yellow]{stderr.decode()}[/yellow]")
             
         if proc.returncode != 0:
