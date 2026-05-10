@@ -317,6 +317,13 @@ class LLVMLabApp(App):
         # Load default O1 pipeline on startup
         self.run_worker(self.load_preset("O1"))
 
+        # Auto-select first available source
+        sources = sorted(Path("code").glob("*.cpp"))
+        if sources:
+            self.selected_source = sources[0]
+            self.query_one("#selected-source-label", Label).update(f"[bold cyan]{self.selected_source.name}[/bold cyan]")
+            self.log_message(f"[green]Auto-selected source:[/green] {self.selected_source.name}")
+
     async def load_preset(self, level):
         opt = self.find_tool("opt")
         # -print-pipeline-passes output is sent to stdout
