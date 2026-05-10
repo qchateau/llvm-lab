@@ -6,6 +6,17 @@
 using namespace llvm;
 
 namespace {
+struct PrintCGSCCPass : public PassInfoMixin<PrintCGSCCPass> {
+    PreservedAnalyses run(LazyCallGraph::SCC& C, CGSCCAnalysisManager& AM, LazyCallGraph& CG, CGSCCUpdateResult& UR) {
+        errs() << "PrintCGSCC running on SCC: ";
+        for (auto& Node : C) {
+            errs() << Node.getFunction().getName() << " ";
+        }
+        errs() << "\n";
+        return PreservedAnalyses::all();
+    }
+};
+
 struct PrintModulePass : public PassInfoMixin<PrintModulePass> {
     PreservedAnalyses run(Module& M, ModuleAnalysisManager&) {
         errs() << "PrintModule running on module: " << M.getName() << "\n";
@@ -30,6 +41,14 @@ extern "C" LLVM_ATTRIBUTE_WEAK PassPluginLibraryInfo llvmGetPassPluginInfo() {
     return {
         LLVM_PLUGIN_API_VERSION, "PrinterPlugin", "v0.1",
         [](PassBuilder& PB) {
+            PB.registerPipelineParsingCallback(
+                [](StringRef Name, CGSCCPassManager& CGPM, ArrayRef<PassBuilder::PipelineElement>) {
+                    if (Name == "print-cgscc") {
+                        CGPM.addPass(PrintCGSCCPass());
+                        return true;
+                    }
+                    return false;
+                });
             PB.registerPipelineParsingCallback(
                 [](StringRef Name, FunctionPassManager& FPM, ArrayRef<PassBuilder::PipelineElement> Args) {
                     if (Name == "print-func") {
