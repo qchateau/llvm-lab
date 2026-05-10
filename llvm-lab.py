@@ -118,11 +118,10 @@ class PipelineEditor(Vertical):
         with Horizontal(id="pipeline-add-row"):
             yield Input(placeholder="pass-name", id="new-pass-name")
             yield Button("ADD", id="add-pass-btn")
-            yield Button("MODIFY", id="modify-pass-btn")
+            yield Button("MOD", id="modify-pass-btn")
             yield Button("DEL", id="remove-pass-btn")
-        with Horizontal(id="pipeline-actions"):
-            yield Button("UP", id="move-up-btn")
-            yield Button("DOWN", id="move-down-btn")
+            yield Button("↑", id="move-up-btn", classes="nav-btn")
+            yield Button("↓", id="move-down-btn", classes="nav-btn")
 
     def load_pipeline(self, s):
         tree = self.query_one("#pipeline-tree", Tree)
@@ -191,11 +190,11 @@ class LLVMLabApp(App):
     }
     #pipeline-header {
         height: auto;
-        align: left middle;
+        margin-bottom: 1;
     }
     .preset-btn {
         width: auto;
-        min-width: 8;
+        min-width: 6;
         margin-right: 1;
         margin-top: 0;
         height: 3;
@@ -207,6 +206,7 @@ class LLVMLabApp(App):
     #pipeline-add-row {
         height: auto;
         padding: 0 1;
+        margin-top: 1;
     }
     #pipeline-add-row Input {
         width: 3fr;
@@ -214,19 +214,17 @@ class LLVMLabApp(App):
     }
     #pipeline-add-row Button {
         width: auto;
-        min-width: 10;
+        min-width: 6;
         margin: 0 0 0 1;
         height: 3;
     }
-    #pipeline-actions {
+    .nav-btn {
+        width: 4;
+        margin-left: 1;
         height: 3;
-        padding: 0 1;
-        margin-bottom: 1;
     }
-    #pipeline-actions Button {
-        width: 1fr;
-        margin: 0 1;
-        height: 3;
+    #pipeline-actions {
+        display: none;
     }
     #main-tabs {
         height: 1fr;
@@ -263,12 +261,6 @@ class LLVMLabApp(App):
             else:
                 node.label = Text(label)
             event.stop()
-
-    def action_move_up(self) -> None:
-        self.handle_move_up()
-
-    def action_move_down(self) -> None:
-        self.handle_move_down()
 
     def __init__(self):
         super().__init__()
@@ -392,8 +384,21 @@ class LLVMLabApp(App):
     def on_mount(self) -> None:
         self.refresh_files()
         self.set_interval(2.0, self.refresh_files)
-        # Load default O1 pipeline on startup
-        self.run_worker(self.load_preset("O1"))
+
+        # Load pipeline from cache if it exists, else default O1
+        pipeline_file = CACHE_DIR / "pipeline.ll"
+        if pipeline_file.exists():
+            try:
+                with open(pipeline_file, "r") as f:
+                    pipeline_str = f.read()
+                self.query_one("#pipeline-editor", PipelineEditor).load_pipeline(
+                    pipeline_str
+                )
+                self.log_message("[green]Pipeline loaded from cache.[/green]")
+            except:
+                self.run_worker(self.load_preset("O1"))
+        else:
+            self.run_worker(self.load_preset("O1"))
 
         # Auto-select first available source
         sources = sorted(Path("code").glob("*.cpp"))
@@ -684,9 +689,12 @@ class LLVMLabApp(App):
 
         if res:
             self.save_manifest()
-            self.log_message(
-                "[bold green]Workflow completed successfully![/bold green]"
-            )
+            # Auto-save pipeline to cache
+            with open(CACHE_DIR / "pipeline.ll", "w") as f:
+                f.write(opt_pipeline)
+            self.log_message("[green]Pipeline auto-saved to .build_cache/pipeline.ll[/green]")
+            self.log_message("[bold green]Workflow completed successfully![/bold green]")
+
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
