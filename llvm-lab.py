@@ -425,10 +425,22 @@ class LLVMLabApp(App):
         stdout, _ = await proc.communicate()
         if proc.returncode == 0:
             pipeline_str = stdout.decode().strip()
+
+            # Post-process: strip custom printer passes if present
+            root = parse_pipeline(pipeline_str)
+
+            def filter_passes(node):
+                node.children = [c for c in node.children if c.name != "print"]
+                for c in node.children:
+                    filter_passes(c)
+
+            filter_passes(root)
+
             self.query_one("#pipeline-editor", PipelineEditor).load_pipeline(
-                pipeline_str
+                root.to_string()
             )
             self.log_message(f"Loaded {level} preset.")
+
         else:
             self.log_message(f"[red]Failed to fetch {level} preset.[/red]")
 
@@ -633,28 +645,38 @@ class LLVMLabApp(App):
             except:
                 pass
 
-        self.log_message(f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---")
+        self.log_message(
+            f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---"
+        )
 
         clang_flags = self.query_one("#clang-flags", Input).value
-        opt_pipeline = self.query_one("#pipeline-editor", PipelineEditor).get_pipeline_string()
+        opt_pipeline = self.query_one(
+            "#pipeline-editor", PipelineEditor
+        ).get_pipeline_string()
 
         if not opt_pipeline:
-            self.log_message("[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]")
+            self.log_message(
+                "[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]"
+            )
 
         # Determine if we need to compile
         if self.selected_source.suffix == ".ll":
-            self.log_message(f"Skipping compilation for IR file: {self.selected_source.name}")
+            self.log_message(
+                f"Skipping compilation for IR file: {self.selected_source.name}"
+            )
             ir_file = self.selected_source
         else:
             # 1. Compile Source to IR
             ir_file = await self.compile_source(self.selected_source, clang_flags)
-            if not ir_file: return
+            if not ir_file:
+                return
 
         # 2. Compile Plugins
         plugin_libs = []
         for p_src in self.selected_plugins:
             lib = await self.compile_plugin(p_src)
-            if not lib: return
+            if not lib:
+                return
             plugin_libs.append(lib)
 
         # 3. Run Opt
@@ -662,8 +684,9 @@ class LLVMLabApp(App):
 
         if res:
             self.save_manifest()
-            self.log_message("[bold green]Workflow completed successfully![/bold green]")
-
+            self.log_message(
+                "[bold green]Workflow completed successfully![/bold green]"
+            )
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
@@ -745,8 +768,7 @@ class LLVMLabApp(App):
         cmd.append(f"-passes={pipeline}")
         cmd.extend([str(ir_file), "-S", "-o", str(out_path)])
 
-        # We explicitly set log_stdout=False here to suppress IR output
-        if await self.exec_cmd(cmd, log_stdout=False):
+        if await self.exec_cmd(cmd):
             content = out_path.read_text()
             ir_view = self.query_one("#ir-view", Static)
             ir_view.update(Syntax(content, "llvm", theme="monokai", line_numbers=True))
