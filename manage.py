@@ -487,8 +487,6 @@ class LLVMLabApp(App):
         if res:
             self.save_manifest()
             self.log_message("[bold green]Workflow completed successfully![/bold green]")
-            # Ensure tab switch happens here as well if needed
-            self.call_after_refresh(lambda: setattr(self.query_one("#main-tabs", TabbedContent), "active", "ir-tab"))
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
