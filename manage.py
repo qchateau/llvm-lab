@@ -4,6 +4,7 @@ import sys
 import subprocess
 import json
 import hashlib
+import asyncio
 from pathlib import Path
 from datetime import datetime
 
@@ -11,7 +12,8 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.widgets import (
     Header, Footer, DirectoryTree, SelectionList, 
-    Input, Label, Button, RichLog, Static, TabbedContent, TabPane
+    Input, Label, Button, RichLog, Static, TabbedContent, TabPane,
+    Tree
 )
 from textual.binding import Binding
 from textual import on, work
@@ -20,6 +22,111 @@ from rich.text import Text
 
 CACHE_DIR = Path(".build_cache")
 MANIFEST_FILE = CACHE_DIR / "manifest.json"
+
+class PipelineNode:
+    def __init__(self, name, params=None, children=None, enabled=True):
+        self.name = name
+        self.params = params or ""
+        self.children = children or []
+        self.enabled = enabled
+
+    def to_string(self):
+        if not self.enabled:
+            return ""
+        
+        if self.children:
+            inner = ",".join(filter(None, [c.to_string() for c in self.children]))
+            if not inner:
+                return ""
+            return f"{self.name}{self.params}({inner})"
+        
+        return self.name + self.params
+
+def parse_pipeline(s):
+    import re
+    # Match pass names, parameters in <>, and structural characters ( ) ,
+    tokens = re.findall(r'[a-zA-Z0-9_-]+|<[^>]+>|\(|\)|,', s)
+    pos = 0
+
+    def parse_element():
+        nonlocal pos
+        name = tokens[pos]
+        pos += 1
+        params = ""
+        if pos < len(tokens) and tokens[pos].startswith('<'):
+            params = tokens[pos]
+            pos += 1
+        
+        children = []
+        if pos < len(tokens) and tokens[pos] == '(':
+            pos += 1
+            while pos < len(tokens) and tokens[pos] != ')':
+                children.append(parse_element())
+                if pos < len(tokens) and tokens[pos] == ',':
+                    pos += 1
+            if pos < len(tokens) and tokens[pos] == ')':
+                pos += 1
+        return PipelineNode(name, params, children)
+
+    def parse_list():
+        nonlocal pos
+        elements = []
+        while pos < len(tokens):
+            elements.append(parse_element())
+            if pos < len(tokens) and tokens[pos] == ',':
+                pos += 1
+            elif pos < len(tokens) and tokens[pos] == ')':
+                break
+        return elements
+
+    if not tokens:
+        return PipelineNode("module")
+
+    elements = parse_list()
+    # If the root is already a module(...) or similar, return it
+    if len(elements) == 1 and elements[0].children:
+        return elements[0]
+    # Otherwise wrap in a module manager
+    return PipelineNode("module", "", elements)
+
+class PipelineEditor(Vertical):
+    def compose(self) -> ComposeResult:
+        yield Label("PIPELINE EDITOR", classes="section-label")
+        with Horizontal(id="pipeline-header"):
+            yield Button("O0", id="preset-O0", classes="preset-btn")
+            yield Button("O1", id="preset-O1", classes="preset-btn")
+            yield Button("O2", id="preset-O2", classes="preset-btn")
+            yield Button("O3", id="preset-O3", classes="preset-btn")
+            yield Button("Os", id="preset-Os", classes="preset-btn")
+        yield Tree("Pipeline", id="pipeline-tree")
+        with Horizontal(id="pipeline-add-row"):
+            yield Input(placeholder="pass-name", id="new-pass-name")
+            yield Button("ADD", id="add-pass-btn")
+        with Horizontal(id="pipeline-actions"):
+            yield Button("UP", id="move-up-btn")
+            yield Button("DOWN", id="move-down-btn")
+            yield Button("DEL", id="remove-pass-btn")
+
+    def load_pipeline(self, s):
+        tree = self.query_one("#pipeline-tree", Tree)
+        tree.clear()
+        root_node = parse_pipeline(s)
+        self.build_tree(tree.root, root_node)
+        tree.root.expand_all()
+
+    def build_tree(self, tree_node, pipe_node):
+        tree_node.data = pipe_node
+        label = f"{'[x]' if pipe_node.enabled else '[ ]'} {pipe_node.name}{pipe_node.params}"
+        tree_node.label = label
+        for child in pipe_node.children:
+            new_tree_node = tree_node.add(child.name, data=child)
+            self.build_tree(new_tree_node, child)
+
+    def get_pipeline_string(self):
+        tree = self.query_one("#pipeline-tree", Tree)
+        if tree.root.data:
+            return tree.root.data.to_string()
+        return ""
 
 class LLVMLabApp(App):
     CSS = """
@@ -41,15 +148,60 @@ class LLVMLabApp(App):
         margin: 1 0 0 0;
         text-style: bold;
     }
-    #log-view, #ir-view {
+    #log-view, #ir-view, #status-log {
         height: 1fr;
         border: solid $primary;
         background: $surface;
     }
     #controls {
-        height: auto;
-        border-bottom: tall $primary;
+        height: 1fr;
         padding: 1;
+    }
+    #pipeline-header {
+        height: auto;
+        align: left middle;
+    }
+    .preset-btn {
+        width: auto;
+        min-width: 8;
+        margin-right: 1;
+        margin-top: 0;
+        height: 3;
+    }
+    #pipeline-tree {
+        height: 15;
+        border: solid $primary;
+    }
+    #pipeline-add-row {
+        height: auto;
+        padding: 0 1;
+    }
+    #pipeline-add-row Input {
+        width: 3fr;
+        margin: 0;
+    }
+    #pipeline-add-row Button {
+        width: auto;
+        min-width: 10;
+        margin: 0 0 0 1;
+        height: 3;
+    }
+    #pipeline-actions {
+        height: auto;
+        padding: 0 1;
+        margin-bottom: 1;
+    }
+    #pipeline-actions Button {
+        width: 1fr;
+        margin: 0 1;
+        height: 3;
+    }
+    #main-tabs {
+        height: 1fr;
+    }
+    #ir-container {
+        height: 1fr;
+        border: solid $primary;
     }
     Input {
         margin-bottom: 1;
@@ -125,18 +277,21 @@ class LLVMLabApp(App):
             yield SelectionList(id="plugin-list")
             
         with Vertical(id="main-content"):
-            with Vertical(id="controls"):
-                yield Label("Clang Flags:")
-                yield Input(value="-O1", placeholder="-O1 -g ...", id="clang-flags")
-                yield Label("Opt Pipeline:")
-                yield Input(value="default<O2>", placeholder="default<O2>, mem2reg, ...", id="opt-pipeline")
-                yield Button("RUN OPTIMIZATION", variant="primary", id="run-btn")
+            with TabbedContent(id="main-tabs"):
+                with TabPane("CONFIG", id="config-tab"):
+                    with Vertical(id="controls"):
+                        yield Label("CLANG FLAGS", classes="section-label")
+                        yield Input(value="-O0 -Xclang -disable-O0-optnone", placeholder="-O1 -g ...", id="clang-flags")
+                        yield PipelineEditor(id="pipeline-editor")
+                        yield Button("RUN OPTIMIZATION", variant="primary", id="run-btn")
+                        yield Label("STATUS", classes="section-label")
+                        yield RichLog(id="status-log", highlight=True, markup=True)
 
-            with TabbedContent():
-                with TabPane("Logs", id="logs-tab"):
+                with TabPane("IR VIEWER", id="ir-tab"):
+                    yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
+
+                with TabPane("DETAILED LOGS", id="logs-tab"):
                     yield RichLog(id="log-view", highlight=True, markup=True)
-                with TabPane("IR Output", id="ir-tab"):
-                    yield ScrollableContainer(Static(id="ir-view"))
         yield Footer()
 
     @on(DirectoryTree.FileSelected)
@@ -159,6 +314,94 @@ class LLVMLabApp(App):
     def on_mount(self) -> None:
         self.refresh_files()
         self.set_interval(2.0, self.refresh_files)
+        # Load default O1 pipeline on startup
+        self.run_worker(self.load_preset("O1"))
+
+    async def load_preset(self, level):
+        opt = self.find_tool("opt")
+        # -print-pipeline-passes output is sent to stdout
+        cmd = [opt, f"-{level}", "-print-pipeline-passes", "/dev/null", "-S", "-o", "/dev/null"]
+        self.log_message(f"Fetching {level} pipeline...")
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        stdout, _ = await proc.communicate()
+        if proc.returncode == 0:
+            pipeline_str = stdout.decode().strip()
+            self.query_one("#pipeline-editor", PipelineEditor).load_pipeline(pipeline_str)
+            self.log_message(f"Loaded {level} preset.")
+        else:
+            self.log_message(f"[red]Failed to fetch {level} preset.[/red]")
+
+    @on(Button.Pressed, ".preset-btn")
+    def handle_preset(self, event: Button.Pressed) -> None:
+        level = event.button.id.split("-")[1]
+        self.run_worker(self.load_preset(level))
+
+    @on(Tree.NodeSelected)
+    def handle_node_selected(self, event: Tree.NodeSelected) -> None:
+        node = event.node
+        if node.data:
+            node.data.enabled = not node.data.enabled
+            label = f"{'[x]' if node.data.enabled else '[ ]'} {node.data.name}{node.data.params}"
+            node.label = label
+
+    @on(Button.Pressed, "#move-up-btn")
+    def handle_move_up(self) -> None:
+        tree = self.query_one("#pipeline-tree", Tree)
+        node = tree.cursor_node
+        if node and node.parent and node.parent.data:
+            idx = node.parent.children.index(node)
+            if idx > 0:
+                # Swap in data model
+                p_node = node.parent.data
+                p_node.children[idx], p_node.children[idx-1] = p_node.children[idx-1], p_node.children[idx]
+                # Rebuild tree branch
+                self.rebuild_node(node.parent)
+
+    @on(Button.Pressed, "#move-down-btn")
+    def handle_move_down(self) -> None:
+        tree = self.query_one("#pipeline-tree", Tree)
+        node = tree.cursor_node
+        if node and node.parent and node.parent.data:
+            idx = node.parent.children.index(node)
+            if idx < len(node.parent.children) - 1:
+                # Swap in data model
+                p_node = node.parent.data
+                p_node.children[idx], p_node.children[idx+1] = p_node.children[idx+1], p_node.children[idx]
+                self.rebuild_node(node.parent)
+
+    @on(Button.Pressed, "#remove-pass-btn")
+    def handle_remove(self) -> None:
+        tree = self.query_one("#pipeline-tree", Tree)
+        node = tree.cursor_node
+        if node and node.parent and node.parent.data:
+            idx = node.parent.children.index(node)
+            node.parent.data.children.pop(idx)
+            self.rebuild_node(node.parent)
+
+    @on(Button.Pressed, "#add-pass-btn")
+    def handle_add_pass(self) -> None:
+        tree = self.query_one("#pipeline-tree", Tree)
+        node = tree.cursor_node
+        pass_name = self.query_one("#new-pass-name", Input).value
+        if node and pass_name:
+            # Add as child if node is a manager, or sibling if not?
+            # Let's say we always add as child if it has children, or as sibling
+            target_node = node if node.data.children or node == tree.root else node.parent
+            if target_node and target_node.data:
+                target_node.data.children.append(PipelineNode(pass_name))
+                self.rebuild_node(target_node)
+                self.query_one("#new-pass-name", Input).value = ""
+
+    def rebuild_node(self, tree_node):
+        tree_node.remove_children()
+        pipe_node = tree_node.data
+        editor = self.query_one("#pipeline-editor", PipelineEditor)
+        for child in pipe_node.children:
+            new_tree_node = tree_node.add(child.name, data=child)
+            editor.build_tree(new_tree_node, child)
+        tree_node.expand_all()
 
     def refresh_files(self) -> None:
         # Refresh DirectoryTree
@@ -199,8 +442,12 @@ class LLVMLabApp(App):
             self._is_refreshing = False
 
     def log_message(self, message: str):
-        log_view = self.query_one("#log-view", RichLog)
-        log_view.write(message)
+        for log_id in ("#log-view", "#status-log"):
+            try:
+                log_view = self.query_one(log_id, RichLog)
+                log_view.write(message)
+            except:
+                pass
 
     @work(exclusive=True)
     async def run_process(self):
@@ -208,12 +455,20 @@ class LLVMLabApp(App):
             self.log_message("[red]Error: No source file selected![/red]")
             return
 
-        log_view = self.query_one("#log-view", RichLog)
-        log_view.clear()
+        # Clear logs
+        for log_id in ("#log-view", "#status-log"):
+            try:
+                self.query_one(log_id, RichLog).clear()
+            except:
+                pass
+
         self.log_message(f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---")
 
         clang_flags = self.query_one("#clang-flags", Input).value
-        opt_pipeline = self.query_one("#opt-pipeline", Input).value
+        opt_pipeline = self.query_one("#pipeline-editor", PipelineEditor).get_pipeline_string()
+        
+        if not opt_pipeline:
+            self.log_message("[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]")
         
         # 1. Compile Source to IR
         ir_file = await self.compile_source(self.selected_source, clang_flags)
@@ -290,7 +545,11 @@ class LLVMLabApp(App):
             content = out_path.read_text()
             ir_view = self.query_one("#ir-view", Static)
             ir_view.update(Syntax(content, "llvm", theme="monokai", line_numbers=True))
-            self.query_one(TabbedContent).active = "ir-tab"
+            # Switch to IR tab on success
+            try:
+                self.query_one("#main-tabs", TabbedContent).active = "ir-tab"
+            except:
+                pass
             return out_path
         return None
 
