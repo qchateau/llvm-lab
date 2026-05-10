@@ -111,7 +111,9 @@ class PipelineEditor(Vertical):
             yield Button("O2", id="preset-O2", classes="preset-btn")
             yield Button("O3", id="preset-O3", classes="preset-btn")
             yield Button("Os", id="preset-Os", classes="preset-btn")
-        yield Tree("Pipeline", id="pipeline-tree")
+        tree = Tree("Pipeline", id="pipeline-tree")
+        tree.root.allow_expand = False
+        yield tree
         with Horizontal(id="pipeline-add-row"):
             yield Input(placeholder="pass-name", id="new-pass-name")
             yield Button("ADD", id="add-pass-btn")
@@ -132,6 +134,7 @@ class PipelineEditor(Vertical):
         tree_node.data = pipe_node
         label = f"{'[x]' if pipe_node.enabled else '[ ]'} {pipe_node.name}{pipe_node.params}"
         tree_node.label = label
+        tree_node.allow_expand = False
         for child in pipe_node.children:
             new_tree_node = tree_node.add(child.name, data=child)
             self.build_tree(new_tree_node, child)
