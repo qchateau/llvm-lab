@@ -115,10 +115,11 @@ class PipelineEditor(Vertical):
         with Horizontal(id="pipeline-add-row"):
             yield Input(placeholder="pass-name", id="new-pass-name")
             yield Button("ADD", id="add-pass-btn")
+            yield Button("MODIFY", id="modify-pass-btn")
+            yield Button("DEL", id="remove-pass-btn")
         with Horizontal(id="pipeline-actions"):
             yield Button("UP", id="move-up-btn")
             yield Button("DOWN", id="move-down-btn")
-            yield Button("DEL", id="remove-pass-btn")
 
     def load_pipeline(self, s):
         tree = self.query_one("#pipeline-tree", Tree)
@@ -404,9 +405,13 @@ class LLVMLabApp(App):
     def handle_node_selected(self, event: Tree.NodeSelected) -> None:
         node = event.node
         if node.data:
+            # Toggle enabled state
             node.data.enabled = not node.data.enabled
             label = f"{'[x]' if node.data.enabled else '[ ]'} {node.data.name}{node.data.params}"
             node.label = label
+
+            # Populate input with node name
+            self.query_one("#new-pass-name", Input).value = node.data.name
 
     @on(Button.Pressed, "#move-up-btn")
     def handle_move_up(self) -> None:
@@ -454,8 +459,7 @@ class LLVMLabApp(App):
         node = tree.cursor_node
         pass_name = self.query_one("#new-pass-name", Input).value
         if node and pass_name:
-            # Add as child if node is a manager, or sibling if not?
-            # Let's say we always add as child if it has children, or as sibling
+            # Add as child if node is a manager, or sibling if not
             target_node = (
                 node if node.data.children or node == tree.root else node.parent
             )
@@ -463,6 +467,19 @@ class LLVMLabApp(App):
                 target_node.data.children.append(PipelineNode(pass_name))
                 self.rebuild_node(target_node)
                 self.query_one("#new-pass-name", Input).value = ""
+
+    @on(Button.Pressed, "#modify-pass-btn")
+    def handle_modify_pass(self) -> None:
+        tree = self.query_one("#pipeline-tree", Tree)
+        node = tree.cursor_node
+        new_name = self.query_one("#new-pass-name", Input).value
+        if node and node.data and new_name:
+            node.data.name = new_name
+            # Rebuild node to update label
+            if node.parent:
+                self.rebuild_node(node.parent)
+            else:
+                self.rebuild_node(node)
 
     def rebuild_node(self, tree_node):
         tree_node.remove_children()
