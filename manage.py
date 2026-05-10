@@ -70,6 +70,30 @@ class LLVMLabApp(App):
         self.selected_source = None
         self.selected_plugins = []
         self.manifest = self.load_manifest()
+        self.project_root = Path(__file__).parent.resolve()
+
+    def update_compile_commands(self, file_path, command):
+        compdb_path = self.project_root / "compile_commands.json"
+        db = []
+        if compdb_path.exists():
+            try:
+                with open(compdb_path, "r") as f:
+                    db = json.load(f)
+            except json.JSONDecodeError:
+                db = []
+        
+        abs_file = str(Path(file_path).resolve())
+        # Remove existing entry for this file
+        db = [entry for entry in db if entry["file"] != abs_file]
+        
+        db.append({
+            "directory": str(self.project_root),
+            "command": " ".join(command),
+            "file": abs_file
+        })
+        
+        with open(compdb_path, "w") as f:
+            json.dump(db, f, indent=2)
 
     def load_manifest(self):
         if MANIFEST_FILE.exists():
@@ -169,15 +193,16 @@ class LLVMLabApp(App):
         cache_key = f"src_{src_path.name}_{hash(flags)}"
         out_path = CACHE_DIR / f"{src_path.stem}.ll"
         
+        # Use opt-20 or fallback
+        clang = self.find_tool("clang++")
+        cmd = [clang, "-S", "-emit-llvm"] + flags.split() + [str(src_path), "-o", str(out_path)]
+        self.update_compile_commands(src_path, cmd)
+
         if self.manifest["files"].get(cache_key) == h and out_path.exists():
             self.log_message(f"Using cached IR for {src_path.name}")
             return out_path
 
         self.log_message(f"Compiling {src_path.name} to IR...")
-        # Use opt-20 or fallback
-        clang = self.find_tool("clang++")
-        cmd = [clang, "-S", "-emit-llvm"] + flags.split() + [str(src_path), "-o", str(out_path)]
-        
         if await self.exec_cmd(cmd):
             self.manifest["files"][cache_key] = h
             return out_path
@@ -188,18 +213,19 @@ class LLVMLabApp(App):
         cache_key = f"plugin_{p_src.name}"
         out_path = CACHE_DIR / f"{p_src.stem}.so"
 
-        if self.manifest["files"].get(cache_key) == h and out_path.exists():
-            self.log_message(f"Using cached plugin {p_src.name}")
-            return out_path
-
-        self.log_message(f"Building plugin {p_src.name}...")
         llvm_config = self.find_tool("llvm-config")
         cxxflags = subprocess.check_output([llvm_config, "--cxxflags"], text=True).strip().split()
         ldflags = subprocess.check_output([llvm_config, "--ldflags"], text=True).strip().split()
         
         clang_cpp = self.find_tool("clang++")
         cmd = [clang_cpp, "-shared", "-fPIC"] + cxxflags + [str(p_src)] + ldflags + ["-o", str(out_path)]
-        
+        self.update_compile_commands(p_src, cmd)
+
+        if self.manifest["files"].get(cache_key) == h and out_path.exists():
+            self.log_message(f"Using cached plugin {p_src.name}")
+            return out_path
+
+        self.log_message(f"Building plugin {p_src.name}...")
         if await self.exec_cmd(cmd):
             self.manifest["files"][cache_key] = h
             return out_path
