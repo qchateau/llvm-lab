@@ -407,14 +407,25 @@ class LLVMLabApp(App):
     @on(Tree.NodeSelected)
     def handle_node_selected(self, event: Tree.NodeSelected) -> None:
         node = event.node
-        if node.data:
-            # Toggle enabled state
-            node.data.enabled = not node.data.enabled
-            label = f"{'[x]' if node.data.enabled else '[ ]'} {node.data.name}{node.data.params}"
-            node.label = label
-
-            # Populate input with node name
+        if node and hasattr(node, 'data') and isinstance(node.data, PipelineNode):
+            # Populate input with node name for potential modification
             self.query_one("#new-pass-name", Input).value = node.data.name
+
+    def on_key(self, event) -> None:
+        if event.key == "space":
+            tree = self.query_one("#pipeline-tree", Tree)
+            node = tree.cursor_node
+            if node and hasattr(node, 'data') and isinstance(node.data, PipelineNode):
+                node.data.enabled = not node.data.enabled
+                label = f"{'[x]' if node.data.enabled else '[ ]'} {node.data.name}{node.data.params}"
+                node.label = label
+                event.stop()
+        elif event.key == "ctrl+up":
+            self.handle_move_up()
+            event.stop()
+        elif event.key == "ctrl+down":
+            self.handle_move_down()
+            event.stop()
 
     @on(Button.Pressed, "#move-up-btn")
     def handle_move_up(self) -> None:
@@ -429,8 +440,25 @@ class LLVMLabApp(App):
                     p_node.children[idx - 1],
                     p_node.children[idx],
                 )
-                # Rebuild tree branch
+                # Rebuild and select
+                target = node.data
                 self.rebuild_node(node.parent)
+                
+                def restore_selection():
+                    tree = self.query_one("#pipeline-tree", Tree)
+                    # Traverse to find the new node that matches target
+                    def find_node(n):
+                        if n.data is target: return n
+                        for c in n.children:
+                            res = find_node(c)
+                            if res: return res
+                        return None
+                    new_node = find_node(tree.root)
+                    if new_node:
+                        tree.select_node(new_node)
+                        new_node.expand()
+
+                self.call_after_refresh(restore_selection)
 
     @on(Button.Pressed, "#move-down-btn")
     def handle_move_down(self) -> None:
@@ -445,7 +473,25 @@ class LLVMLabApp(App):
                     p_node.children[idx + 1],
                     p_node.children[idx],
                 )
+                # Rebuild and select
+                target = node.data
                 self.rebuild_node(node.parent)
+                
+                def restore_selection():
+                    tree = self.query_one("#pipeline-tree", Tree)
+                    # Traverse to find the new node that matches target
+                    def find_node(n):
+                        if n.data is target: return n
+                        for c in n.children:
+                            res = find_node(c)
+                            if res: return res
+                        return None
+                    new_node = find_node(tree.root)
+                    if new_node:
+                        tree.select_node(new_node)
+                        new_node.expand()
+
+                self.call_after_refresh(restore_selection)
 
     @on(Button.Pressed, "#remove-pass-btn")
     def handle_remove(self) -> None:
@@ -484,14 +530,18 @@ class LLVMLabApp(App):
             else:
                 self.rebuild_node(node)
 
-    def rebuild_node(self, tree_node):
+    def rebuild_node(self, tree_node, target_data=None):
         tree_node.remove_children()
         pipe_node = tree_node.data
         editor = self.query_one("#pipeline-editor", PipelineEditor)
+        found_node = None
         for child in pipe_node.children:
             new_tree_node = tree_node.add(child.name, data=child)
             editor.build_tree(new_tree_node, child)
+            if child is target_data:
+                found_node = new_tree_node
         tree_node.expand_all()
+        return found_node
 
     def refresh_files(self) -> None:
         # Refresh DirectoryTree
