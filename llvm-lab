@@ -11,4 +11,4 @@ if [ ! -d "$DIR/.venv" ]; then
 fi
 
 # Run the python script using the venv's python
-exec "$DIR/.venv/bin/python3" "$DIR/manage.py" "$@"
+exec "$DIR/.venv/bin/python3" "$DIR/llvm-lab.py" "$@"

@@ -364,12 +364,13 @@ class LLVMLabApp(App):
                 yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
 
             with TabPane("DETAILED LOGS", id="logs-tab"):
-                yield RichLog(id="log-view", highlight=True, markup=True)
+                yield RichLog(id="log-view", highlight=True, markup=True, wrap=True)
+
         yield Footer()
 
     @on(DirectoryTree.FileSelected)
     def handle_file_selection(self, event: DirectoryTree.FileSelected) -> None:
-        if event.path.suffix in (".cpp", ".c"):
+        if event.path.suffix in (".cpp", ".c", ".ll"):
             self.selected_source = event.path
             self.query_one("#selected-source-label", Label).update(
                 f"[bold cyan]{event.path.name}[/bold cyan]"
@@ -632,31 +633,28 @@ class LLVMLabApp(App):
             except:
                 pass
 
-        self.log_message(
-            f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---"
-        )
+        self.log_message(f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---")
 
         clang_flags = self.query_one("#clang-flags", Input).value
-        opt_pipeline = self.query_one(
-            "#pipeline-editor", PipelineEditor
-        ).get_pipeline_string()
+        opt_pipeline = self.query_one("#pipeline-editor", PipelineEditor).get_pipeline_string()
 
         if not opt_pipeline:
-            self.log_message(
-                "[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]"
-            )
+            self.log_message("[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]")
 
-        # 1. Compile Source to IR
-        ir_file = await self.compile_source(self.selected_source, clang_flags)
-        if not ir_file:
-            return
+        # Determine if we need to compile
+        if self.selected_source.suffix == ".ll":
+            self.log_message(f"Skipping compilation for IR file: {self.selected_source.name}")
+            ir_file = self.selected_source
+        else:
+            # 1. Compile Source to IR
+            ir_file = await self.compile_source(self.selected_source, clang_flags)
+            if not ir_file: return
 
         # 2. Compile Plugins
         plugin_libs = []
         for p_src in self.selected_plugins:
             lib = await self.compile_plugin(p_src)
-            if not lib:
-                return
+            if not lib: return
             plugin_libs.append(lib)
 
         # 3. Run Opt
@@ -664,9 +662,8 @@ class LLVMLabApp(App):
 
         if res:
             self.save_manifest()
-            self.log_message(
-                "[bold green]Workflow completed successfully![/bold green]"
-            )
+            self.log_message("[bold green]Workflow completed successfully![/bold green]")
+
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
