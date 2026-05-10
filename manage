@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+import argparse
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+def run_command(cmd, verbose=True):
+    if verbose:
+        print(f"Running: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+    return result.stdout
+
+def find_tool(tool_name, preferred_version=None):
+    """Try to find a versioned or unversioned tool."""
+    versions = [preferred_version] if preferred_version else ["", "20", "18", "17", "14"]
+    for v in versions:
+        name = f"{tool_name}-{v}" if v else tool_name
+        try:
+            subprocess.run([name, "--version"], capture_output=True)
+            return name
+        except FileNotFoundError:
+            continue
+    print(f"Error: Could not find {tool_name}. Try specifying --llvm-version.", file=sys.stderr)
+    sys.exit(1)
+
+def compile_src(args):
+    src_path = Path("code") / args.source
+    if not src_path.exists():
+        print(f"Error: Source file {src_path} not found.")
+        sys.exit(1)
+    
+    out_name = args.output if args.output else src_path.stem + ".ll"
+    out_path = Path("ir") / out_name
+    
+    clang = find_tool("clang++", args.llvm_version)
+    cmd = [clang, "-S", "-emit-llvm", f"-O{args.opt_level}", str(src_path), "-o", str(out_path)]
+    if args.flags:
+        cmd.extend(args.flags.split())
+    
+    run_command(cmd)
+    print(f"Compiled {src_path} to {out_path}")
+
+def optimize_ir(args):
+    in_path = Path("ir") / args.input
+    if not in_path.exists():
+        print(f"Error: Input file {in_path} not found.")
+        sys.exit(1)
+    
+    out_name = args.output if args.output else in_path.stem + ".opt.ll"
+    out_path = Path("ir") / out_name
+    
+    opt = find_tool("opt", args.llvm_version)
+    cmd = [opt]
+    
+    if args.plugin:
+        cmd.append(f"-load-pass-plugin={args.plugin}")
+    
+    if args.passes:
+        cmd.append(f"-passes={args.passes}")
+    
+    if args.args:
+        cmd.extend(args.args.split())
+        
+    cmd.extend([str(in_path), "-S", "-o", str(out_path)])
+    
+    run_command(cmd)
+    print(f"Optimized {in_path} to {out_path}")
+
+def build_plugin(args):
+    plugin_src = Path("plugins") / (args.name + ".cpp")
+    if not plugin_src.exists():
+        print(f"Error: Plugin source {plugin_src} not found.")
+        sys.exit(1)
+        
+    plugin_out = Path("plugins") / (args.name + ".so")
+    
+    llvm_config = find_tool("llvm-config", args.llvm_version)
+    cxxflags = run_command([llvm_config, "--cxxflags"]).strip().split()
+    ldflags = run_command([llvm_config, "--ldflags"]).strip().split()
+    
+    clang_cpp = find_tool("clang++", args.llvm_version)
+    
+    # Standard flags for building a pass plugin
+    cmd = [clang_cpp, "-shared", "-fPIC"] + cxxflags + [str(plugin_src)] + ldflags + ["-o", str(plugin_out)]
+    
+    run_command(cmd)
+    print(f"Built plugin {plugin_out}")
+
+def main():
+    parser = argparse.ArgumentParser(description="LLVM Experiment Manager")
+    parser.add_argument("--llvm-version", help="LLVM version to use (e.g., 18)")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # Compile
+    compile_parser = subparsers.add_parser("compile", help="Compile C++ to LLVM IR")
+    compile_parser.add_argument("source", help="Source file in code/")
+    compile_parser.add_argument("-o", "--output", help="Output file in ir/")
+    compile_parser.add_argument("-O", "--opt-level", type=int, default=1, help="Optimization level (0, 1, 2, 3)")
+    compile_parser.add_argument("--flags", help="Extra clang flags")
+    compile_parser.set_defaults(func=compile_src)
+
+    # Optimize
+    optimize_parser = subparsers.add_parser("optimize", help="Optimize LLVM IR")
+    optimize_parser.add_argument("input", help="Input IR file in ir/")
+    optimize_parser.add_argument("-o", "--output", help="Output file in ir/")
+    optimize_parser.add_argument("--plugin", help="Path to pass plugin .so")
+    optimize_parser.add_argument("--passes", help="Pipeline string (e.g., 'default<O2>')")
+    optimize_parser.add_argument("--args", help="Extra opt arguments")
+    optimize_parser.set_defaults(func=optimize_ir)
+
+    # Build Plugin
+    build_parser = subparsers.add_parser("build-plugin", help="Build a pass plugin")
+    build_parser.add_argument("name", help="Plugin name (src in plugins/<name>.cpp)")
+    build_parser.set_defaults(func=build_plugin)
+
+    args = parser.parse_args()
+    args.func(args)
+
+if __name__ == "__main__":
+    main()
