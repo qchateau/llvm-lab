@@ -23,6 +23,7 @@ from textual.widgets import (
     TabbedContent,
     TabPane,
     Tree,
+    Checkbox,
 )
 from textual.binding import Binding
 from textual import on, work
@@ -344,9 +345,14 @@ class LLVMLabApp(App):
                         with Vertical(id="controls"):
                             yield Label("CLANG FLAGS", classes="section-label")
                             yield Input(
-                                value="-O0 -Xclang -disable-O0-optnone",
+                                value="-O0",
                                 placeholder="-O1 -g ...",
                                 id="clang-flags",
+                            )
+                            yield Checkbox(
+                                "Strip optnone/noinline attributes",
+                                id="strip-optnone",
+                                value=True,
                             )
                             yield Label("STATUS", classes="section-label")
                             yield RichLog(id="status-log", highlight=True, markup=True)
@@ -664,16 +670,15 @@ class LLVMLabApp(App):
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
-        cache_key = f"src_{src_path.name}_{hash(flags)}"
+        strip_optnone = self.query_one("#strip-optnone", Checkbox).value
+        cache_key = f"src_{src_path.name}_{hash(flags)}_{strip_optnone}"
         out_path = CACHE_DIR / f"{src_path.stem}.ll"
 
-        # Use opt-20 or fallback
         clang = self.find_tool("clang++")
-        cmd = (
-            [clang, "-S", "-emit-llvm"]
-            + flags.split()
-            + [str(src_path), "-o", str(out_path)]
-        )
+        cmd = [clang, "-S", "-emit-llvm"] + flags.split()
+        if strip_optnone:
+            cmd.extend(["-Xclang", "-disable-O0-optnone"])
+        cmd.extend([str(src_path), "-o", str(out_path)])
         self.update_compile_commands(src_path, cmd)
 
         if self.manifest["files"].get(cache_key) == h and out_path.exists():
@@ -682,6 +687,15 @@ class LLVMLabApp(App):
 
         self.log_message(f"Compiling {src_path.name} to IR...")
         if await self.exec_cmd(cmd):
+            # Post-process: strip noinline attributes if requested
+            if strip_optnone:
+                content = out_path.read_text()
+                import re
+
+                # Replace ' optnone' and ' noinline' attributes in function definitions
+                content = re.sub(r"\b(noinline)\b", "", content)
+                out_path.write_text(content)
+
             self.manifest["files"][cache_key] = h
             return out_path
         return None
