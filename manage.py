@@ -11,9 +11,18 @@ from datetime import datetime
 from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical, ScrollableContainer
 from textual.widgets import (
-    Header, Footer, DirectoryTree, SelectionList, 
-    Input, Label, Button, RichLog, Static, TabbedContent, TabPane,
-    Tree
+    Header,
+    Footer,
+    DirectoryTree,
+    SelectionList,
+    Input,
+    Label,
+    Button,
+    RichLog,
+    Static,
+    TabbedContent,
+    TabPane,
+    Tree,
 )
 from textual.binding import Binding
 from textual import on, work
@@ -22,6 +31,7 @@ from rich.text import Text
 
 CACHE_DIR = Path(".build_cache")
 MANIFEST_FILE = CACHE_DIR / "manifest.json"
+
 
 class PipelineNode:
     def __init__(self, name, params=None, children=None, enabled=True):
@@ -33,19 +43,21 @@ class PipelineNode:
     def to_string(self):
         if not self.enabled:
             return ""
-        
+
         if self.children:
             inner = ",".join(filter(None, [c.to_string() for c in self.children]))
             if not inner:
                 return ""
             return f"{self.name}{self.params}({inner})"
-        
+
         return self.name + self.params
+
 
 def parse_pipeline(s):
     import re
+
     # Match pass names, parameters in <>, and structural characters ( ) ,
-    tokens = re.findall(r'[a-zA-Z0-9_-]+|<[^>]+>|\(|\)|,', s)
+    tokens = re.findall(r"[a-zA-Z0-9_-]+|<[^>]+>|\(|\)|,", s)
     pos = 0
 
     def parse_element():
@@ -53,18 +65,18 @@ def parse_pipeline(s):
         name = tokens[pos]
         pos += 1
         params = ""
-        if pos < len(tokens) and tokens[pos].startswith('<'):
+        if pos < len(tokens) and tokens[pos].startswith("<"):
             params = tokens[pos]
             pos += 1
-        
+
         children = []
-        if pos < len(tokens) and tokens[pos] == '(':
+        if pos < len(tokens) and tokens[pos] == "(":
             pos += 1
-            while pos < len(tokens) and tokens[pos] != ')':
+            while pos < len(tokens) and tokens[pos] != ")":
                 children.append(parse_element())
-                if pos < len(tokens) and tokens[pos] == ',':
+                if pos < len(tokens) and tokens[pos] == ",":
                     pos += 1
-            if pos < len(tokens) and tokens[pos] == ')':
+            if pos < len(tokens) and tokens[pos] == ")":
                 pos += 1
         return PipelineNode(name, params, children)
 
@@ -73,9 +85,9 @@ def parse_pipeline(s):
         elements = []
         while pos < len(tokens):
             elements.append(parse_element())
-            if pos < len(tokens) and tokens[pos] == ',':
+            if pos < len(tokens) and tokens[pos] == ",":
                 pos += 1
-            elif pos < len(tokens) and tokens[pos] == ')':
+            elif pos < len(tokens) and tokens[pos] == ")":
                 break
         return elements
 
@@ -88,6 +100,7 @@ def parse_pipeline(s):
         return elements[0]
     # Otherwise wrap in a module manager
     return PipelineNode("module", "", elements)
+
 
 class PipelineEditor(Vertical):
     def compose(self) -> ComposeResult:
@@ -128,13 +141,22 @@ class PipelineEditor(Vertical):
             return tree.root.data.to_string()
         return ""
 
+
 class LLVMLabApp(App):
     CSS = """
     Screen {
         layout: horizontal;
     }
+    #config-tab {
+        layout: horizontal;
+    }
     #sidebar {
-        width: 40;
+        width: 15%;
+        border-right: tall $primary;
+        background: $surface;
+    }
+    #pipeline-col {
+        width: 50%;
         border-right: tall $primary;
         background: $surface;
     }
@@ -169,7 +191,7 @@ class LLVMLabApp(App):
         height: 3;
     }
     #pipeline-tree {
-        height: 15;
+        height: 1fr;
         border: solid $primary;
     }
     #pipeline-add-row {
@@ -187,7 +209,7 @@ class LLVMLabApp(App):
         height: 3;
     }
     #pipeline-actions {
-        height: auto;
+        height: 3;
         padding: 0 1;
         margin-bottom: 1;
     }
@@ -235,17 +257,19 @@ class LLVMLabApp(App):
                     db = json.load(f)
             except json.JSONDecodeError:
                 db = []
-        
+
         abs_file = str(Path(file_path).resolve())
         # Remove existing entry for this file
         db = [entry for entry in db if entry["file"] != abs_file]
-        
-        db.append({
-            "directory": str(self.project_root),
-            "command": " ".join(command),
-            "file": abs_file
-        })
-        
+
+        db.append(
+            {
+                "directory": str(self.project_root),
+                "command": " ".join(command),
+                "file": abs_file,
+            }
+        )
+
         with open(compdb_path, "w") as f:
             json.dump(db, f, indent=2)
 
@@ -268,44 +292,61 @@ class LLVMLabApp(App):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        with Vertical(id="sidebar"):
-            yield Label("SELECTED SOURCE:", classes="section-label")
-            yield Label("None", id="selected-source-label")
-            yield Label("SOURCES (code/)", classes="section-label")
-            yield DirectoryTree("code/", id="source-tree")
-            yield Label("PLUGINS (plugins/)", classes="section-label")
-            yield SelectionList(id="plugin-list")
-            
-        with Vertical(id="main-content"):
-            with TabbedContent(id="main-tabs"):
-                with TabPane("CONFIG", id="config-tab"):
-                    with Vertical(id="controls"):
-                        yield Label("CLANG FLAGS", classes="section-label")
-                        yield Input(value="-O0 -Xclang -disable-O0-optnone", placeholder="-O1 -g ...", id="clang-flags")
+
+        with TabbedContent(id="main-tabs"):
+            with TabPane("CONFIG", id="config-tab"):
+                with Horizontal():
+                    # Sidebar
+                    with Vertical(id="sidebar"):
+                        yield Label("SELECTED SOURCE:", classes="section-label")
+                        yield Label("None", id="selected-source-label")
+                        yield Label("SOURCES (code/)", classes="section-label")
+                        yield DirectoryTree("code/", id="source-tree")
+                        yield Label("PLUGINS (plugins/)", classes="section-label")
+                        yield SelectionList(id="plugin-list")
+
+                    # Pipeline Editor
+                    with Vertical(id="pipeline-col"):
                         yield PipelineEditor(id="pipeline-editor")
-                        yield Button("RUN OPTIMIZATION", variant="primary", id="run-btn")
-                        yield Label("STATUS", classes="section-label")
-                        yield RichLog(id="status-log", highlight=True, markup=True)
 
-                with TabPane("IR VIEWER", id="ir-tab"):
-                    yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
+                    # Config & Status
+                    with Vertical(id="main-content"):
+                        with Vertical(id="controls"):
+                            yield Label("CLANG FLAGS", classes="section-label")
+                            yield Input(
+                                value="-O0 -Xclang -disable-O0-optnone",
+                                placeholder="-O1 -g ...",
+                                id="clang-flags",
+                            )
+                            yield Label("STATUS", classes="section-label")
+                            yield RichLog(id="status-log", highlight=True, markup=True)
+                            yield Button(
+                                "RUN OPTIMIZATION", variant="primary", id="run-btn"
+                            )
 
-                with TabPane("DETAILED LOGS", id="logs-tab"):
-                    yield RichLog(id="log-view", highlight=True, markup=True)
+            with TabPane("IR VIEWER", id="ir-tab"):
+                yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
+
+            with TabPane("DETAILED LOGS", id="logs-tab"):
+                yield RichLog(id="log-view", highlight=True, markup=True)
         yield Footer()
 
     @on(DirectoryTree.FileSelected)
     def handle_file_selection(self, event: DirectoryTree.FileSelected) -> None:
         if event.path.suffix in (".cpp", ".c"):
             self.selected_source = event.path
-            self.query_one("#selected-source-label", Label).update(f"[bold cyan]{event.path.name}[/bold cyan]")
+            self.query_one("#selected-source-label", Label).update(
+                f"[bold cyan]{event.path.name}[/bold cyan]"
+            )
             self.log_message(f"[green]Selected source:[/green] {event.path.name}")
 
     @on(SelectionList.SelectedChanged)
     def handle_plugin_selection(self, event: SelectionList.SelectedChanged) -> None:
         self.selected_plugins = [Path(p) for p in event.selection_list.selected]
         if not self._is_refreshing:
-            self.log_message(f"[green]Selected plugins:[/green] {', '.join(p.name for p in self.selected_plugins)}")
+            self.log_message(
+                f"[green]Selected plugins:[/green] {', '.join(p.name for p in self.selected_plugins)}"
+            )
 
     @on(Button.Pressed, "#run-btn")
     def action_run_opt(self) -> None:
@@ -321,13 +362,25 @@ class LLVMLabApp(App):
         sources = sorted(Path("code").glob("*.cpp"))
         if sources:
             self.selected_source = sources[0]
-            self.query_one("#selected-source-label", Label).update(f"[bold cyan]{self.selected_source.name}[/bold cyan]")
-            self.log_message(f"[green]Auto-selected source:[/green] {self.selected_source.name}")
+            self.query_one("#selected-source-label", Label).update(
+                f"[bold cyan]{self.selected_source.name}[/bold cyan]"
+            )
+            self.log_message(
+                f"[green]Auto-selected source:[/green] {self.selected_source.name}"
+            )
 
     async def load_preset(self, level):
         opt = self.find_tool("opt")
         # -print-pipeline-passes output is sent to stdout
-        cmd = [opt, f"-{level}", "-print-pipeline-passes", "/dev/null", "-S", "-o", "/dev/null"]
+        cmd = [
+            opt,
+            f"-{level}",
+            "-print-pipeline-passes",
+            "/dev/null",
+            "-S",
+            "-o",
+            "/dev/null",
+        ]
         self.log_message(f"Fetching {level} pipeline...")
         proc = await asyncio.create_subprocess_exec(
             *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
@@ -335,7 +388,9 @@ class LLVMLabApp(App):
         stdout, _ = await proc.communicate()
         if proc.returncode == 0:
             pipeline_str = stdout.decode().strip()
-            self.query_one("#pipeline-editor", PipelineEditor).load_pipeline(pipeline_str)
+            self.query_one("#pipeline-editor", PipelineEditor).load_pipeline(
+                pipeline_str
+            )
             self.log_message(f"Loaded {level} preset.")
         else:
             self.log_message(f"[red]Failed to fetch {level} preset.[/red]")
@@ -362,7 +417,10 @@ class LLVMLabApp(App):
             if idx > 0:
                 # Swap in data model
                 p_node = node.parent.data
-                p_node.children[idx], p_node.children[idx-1] = p_node.children[idx-1], p_node.children[idx]
+                p_node.children[idx], p_node.children[idx - 1] = (
+                    p_node.children[idx - 1],
+                    p_node.children[idx],
+                )
                 # Rebuild tree branch
                 self.rebuild_node(node.parent)
 
@@ -375,7 +433,10 @@ class LLVMLabApp(App):
             if idx < len(node.parent.children) - 1:
                 # Swap in data model
                 p_node = node.parent.data
-                p_node.children[idx], p_node.children[idx+1] = p_node.children[idx+1], p_node.children[idx]
+                p_node.children[idx], p_node.children[idx + 1] = (
+                    p_node.children[idx + 1],
+                    p_node.children[idx],
+                )
                 self.rebuild_node(node.parent)
 
     @on(Button.Pressed, "#remove-pass-btn")
@@ -395,7 +456,9 @@ class LLVMLabApp(App):
         if node and pass_name:
             # Add as child if node is a manager, or sibling if not?
             # Let's say we always add as child if it has children, or as sibling
-            target_node = node if node.data.children or node == tree.root else node.parent
+            target_node = (
+                node if node.data.children or node == tree.root else node.parent
+            )
             if target_node and target_node.data:
                 target_node.data.children.append(PipelineNode(pass_name))
                 self.rebuild_node(target_node)
@@ -422,26 +485,28 @@ class LLVMLabApp(App):
         try:
             self._is_refreshing = True
             plugin_list = self.query_one("#plugin-list", SelectionList)
-            
+
             files = sorted(Path("plugins").glob("*.cpp"))
-            
+
             # Optimization: only refresh if the list of files changed or first load
             current_files = set(str(opt.value) for opt in plugin_list._options)
             new_files = set(str(p) for p in files)
-            
+
             if current_files != new_files or self._first_load:
                 new_options = []
                 current_selected_vals = set(str(p) for p in self.selected_plugins)
-                
+
                 for p in files:
                     val = str(p)
                     # On first load, select all. Otherwise, preserve selection.
-                    is_selected = True if self._first_load else val in current_selected_vals
+                    is_selected = (
+                        True if self._first_load else val in current_selected_vals
+                    )
                     new_options.append((p.name, val, is_selected))
-                
+
                 plugin_list.clear_options()
                 plugin_list.add_options(new_options)
-                
+
                 if self._first_load:
                     self.selected_plugins = files
                     self._first_load = False
@@ -469,40 +534,54 @@ class LLVMLabApp(App):
             except:
                 pass
 
-        self.log_message(f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---")
+        self.log_message(
+            f"--- Starting Optimization Workflow at {datetime.now().strftime('%H:%M:%S')} ---"
+        )
 
         clang_flags = self.query_one("#clang-flags", Input).value
-        opt_pipeline = self.query_one("#pipeline-editor", PipelineEditor).get_pipeline_string()
-        
+        opt_pipeline = self.query_one(
+            "#pipeline-editor", PipelineEditor
+        ).get_pipeline_string()
+
         if not opt_pipeline:
-            self.log_message("[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]")
-        
+            self.log_message(
+                "[yellow]Warning: Pipeline is empty or all passes are disabled.[/yellow]"
+            )
+
         # 1. Compile Source to IR
         ir_file = await self.compile_source(self.selected_source, clang_flags)
-        if not ir_file: return
+        if not ir_file:
+            return
 
         # 2. Compile Plugins
         plugin_libs = []
         for p_src in self.selected_plugins:
             lib = await self.compile_plugin(p_src)
-            if not lib: return
+            if not lib:
+                return
             plugin_libs.append(lib)
 
         # 3. Run Opt
         res = await self.run_opt(ir_file, plugin_libs, opt_pipeline)
-        
+
         if res:
             self.save_manifest()
-            self.log_message("[bold green]Workflow completed successfully![/bold green]")
+            self.log_message(
+                "[bold green]Workflow completed successfully![/bold green]"
+            )
 
     async def compile_source(self, src_path, flags):
         h = self.get_file_hash(src_path)
         cache_key = f"src_{src_path.name}_{hash(flags)}"
         out_path = CACHE_DIR / f"{src_path.stem}.ll"
-        
+
         # Use opt-20 or fallback
         clang = self.find_tool("clang++")
-        cmd = [clang, "-S", "-emit-llvm"] + flags.split() + [str(src_path), "-o", str(out_path)]
+        cmd = (
+            [clang, "-S", "-emit-llvm"]
+            + flags.split()
+            + [str(src_path), "-o", str(out_path)]
+        )
         self.update_compile_commands(src_path, cmd)
 
         if self.manifest["files"].get(cache_key) == h and out_path.exists():
@@ -521,11 +600,25 @@ class LLVMLabApp(App):
         out_path = CACHE_DIR / f"{p_src.stem}.so"
 
         llvm_config = self.find_tool("llvm-config")
-        cxxflags = subprocess.check_output([llvm_config, "--cxxflags"], text=True).strip().split()
-        ldflags = subprocess.check_output([llvm_config, "--ldflags"], text=True).strip().split()
-        
+        cxxflags = (
+            subprocess.check_output([llvm_config, "--cxxflags"], text=True)
+            .strip()
+            .split()
+        )
+        ldflags = (
+            subprocess.check_output([llvm_config, "--ldflags"], text=True)
+            .strip()
+            .split()
+        )
+
         clang_cpp = self.find_tool("clang++")
-        cmd = [clang_cpp, "-shared", "-fPIC"] + cxxflags + [str(p_src)] + ldflags + ["-o", str(out_path)]
+        cmd = (
+            [clang_cpp, "-shared", "-fPIC"]
+            + cxxflags
+            + [str(p_src)]
+            + ldflags
+            + ["-o", str(out_path)]
+        )
         self.update_compile_commands(p_src, cmd)
 
         if self.manifest["files"].get(cache_key) == h and out_path.exists():
@@ -542,13 +635,13 @@ class LLVMLabApp(App):
         self.log_message(f"Running optimizer with pipeline: {pipeline}...")
         opt = self.find_tool("opt")
         out_path = CACHE_DIR / f"{ir_file.stem}.opt.ll"
-        
+
         cmd = [opt]
         for p in plugins:
             cmd.append(f"-load-pass-plugin={p}")
         cmd.append(f"-passes={pipeline}")
         cmd.extend([str(ir_file), "-S", "-o", str(out_path)])
-        
+
         # We explicitly set log_stdout=False here to suppress IR output
         if await self.exec_cmd(cmd, log_stdout=False):
             content = out_path.read_text()
@@ -560,20 +653,20 @@ class LLVMLabApp(App):
     async def exec_cmd(self, cmd, log_stdout=True):
         self.log_message(f"[dim]Exec: {' '.join(cmd)}[/dim]")
         proc = await asyncio.create_subprocess_exec(
-            *cmd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
         )
         stdout, stderr = await proc.communicate()
-        
+
         if stdout and log_stdout:
             self.log_message(stdout.decode())
         if stderr and log_stdout:
             # Only show stderr if it's not the IR itself being misdirected
             self.log_message(f"[yellow]{stderr.decode()}[/yellow]")
-            
+
         if proc.returncode != 0:
-            self.log_message(f"[red]Command failed with exit code {proc.returncode}[/red]")
+            self.log_message(
+                f"[red]Command failed with exit code {proc.returncode}[/red]"
+            )
             return False
         return True
 
@@ -587,7 +680,9 @@ class LLVMLabApp(App):
                 continue
         return tool_name
 
+
 import asyncio
+
 if __name__ == "__main__":
     app = LLVMLabApp()
     app.run()
