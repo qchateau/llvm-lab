@@ -163,17 +163,20 @@ class LLVMLabApp(App):
         layout: horizontal;
     }
     #sidebar {
-        width: 15%;
+        width: 30;
+        min-width: 25;
         border-right: tall $primary;
         background: $surface;
     }
     #pipeline-col {
-        width: 50%;
+        width: 2fr;
+        min-width: 45;
         border-right: tall $primary;
         background: $surface;
     }
     #main-content {
         width: 1fr;
+        min-width: 45;
     }
     .section-label {
         background: $primary;
@@ -299,19 +302,19 @@ class LLVMLabApp(App):
                     suffix = f[len("clang++"):]
                     if not suffix or (suffix.startswith("-") and suffix[1:].isdigit()):
                         versions.add(suffix)
-        
+
         # Sort versions: numeric suffixes first (descending), then empty suffix
         sorted_versions = sorted(
             list(versions),
             key=lambda x: (int(x[1:]) if x.startswith("-") and x[1:].isdigit() else -1),
             reverse=True
         )
-        
+
         choices = []
         for v in sorted_versions:
             label = f"LLVM {v[1:]}" if v.startswith("-") else "Default"
             choices.append((label, v))
-        
+
         if not choices:
             choices = [("Default", "")]
         return choices
@@ -610,7 +613,7 @@ class LLVMLabApp(App):
         tree = self.query_one("#pipeline-tree", Tree)
         node = tree.cursor_node
         pass_name = self.query_one("#new-pass-name", Input).value
-        
+
         if node and node.parent and node.parent.data and pass_name:
             # Insert after the currently selected node
             parent_node = node.parent
@@ -621,7 +624,7 @@ class LLVMLabApp(App):
             except ValueError:
                 # Fallback if node not found in children
                 parent_node.data.children.append(PipelineNode(pass_name))
-            
+
             self.rebuild_node(parent_node)
             self.query_one("#new-pass-name", Input).value = ""
         elif tree.root.data and pass_name:
@@ -889,7 +892,7 @@ class LLVMLabApp(App):
             name = f"{tool_name}{v}"
             if shutil.which(name):
                 return name
-        
+
         return tool_name
 
 
