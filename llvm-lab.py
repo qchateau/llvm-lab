@@ -5,6 +5,8 @@ import subprocess
 import json
 import hashlib
 import asyncio
+import re
+import shutil
 from pathlib import Path
 from datetime import datetime
 
@@ -24,6 +26,7 @@ from textual.widgets import (
     TabPane,
     Tree,
     Checkbox,
+    Select,
 )
 from textual.binding import Binding
 from textual import on, work
@@ -233,6 +236,18 @@ class LLVMLabApp(App):
         height: 1fr;
         border: solid $primary;
     }
+    #run-row {
+        height: auto;
+        margin-top: 1;
+    }
+    #llvm-version-select {
+        width: 1fr;
+        margin-right: 1;
+    }
+    #run-btn {
+        width: 2fr;
+        margin-top: 0;
+    }
     Input {
         margin-bottom: 1;
     }
@@ -270,6 +285,36 @@ class LLVMLabApp(App):
         self.project_root = Path(__file__).parent.resolve()
         self._is_refreshing = False
         self._first_load = True
+        self.available_versions = self.discover_llvm_versions()
+
+    def discover_llvm_versions(self):
+        versions = set()
+        # Look for clang++-XX in PATH
+        path_dirs = os.environ.get("PATH", "").split(os.pathsep)
+        for d in path_dirs:
+            if not os.path.isdir(d):
+                continue
+            for f in os.listdir(d):
+                if f.startswith("clang++"):
+                    suffix = f[len("clang++"):]
+                    if not suffix or (suffix.startswith("-") and suffix[1:].isdigit()):
+                        versions.add(suffix)
+        
+        # Sort versions: numeric suffixes first (descending), then empty suffix
+        sorted_versions = sorted(
+            list(versions),
+            key=lambda x: (int(x[1:]) if x.startswith("-") and x[1:].isdigit() else -1),
+            reverse=True
+        )
+        
+        choices = []
+        for v in sorted_versions:
+            label = f"LLVM {v[1:]}" if v.startswith("-") else "Default"
+            choices.append((label, v))
+        
+        if not choices:
+            choices = [("Default", "")]
+        return choices
 
     def update_compile_commands(self, file_path, command):
         compdb_path = self.project_root / "compile_commands.json"
@@ -348,9 +393,16 @@ class LLVMLabApp(App):
                             )
                             yield Label("STATUS", classes="section-label")
                             yield RichLog(id="status-log", highlight=True, markup=True)
-                            yield Button(
-                                "RUN OPTIMIZATION", variant="primary", id="run-btn"
-                            )
+                            with Horizontal(id="run-row"):
+                                yield Select(
+                                    self.available_versions,
+                                    value=self.available_versions[0][1],
+                                    id="llvm-version-select",
+                                    allow_blank=False
+                                )
+                                yield Button(
+                                    "RUN OPTIMIZATION", variant="primary", id="run-btn"
+                                )
 
             with TabPane("IR VIEWER", id="ir-tab"):
                 yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
@@ -819,13 +871,25 @@ class LLVMLabApp(App):
         return True
 
     def find_tool(self, tool_name):
-        for v in ["-20", "-18", "-17", ""]:
+        try:
+            selected_v = self.query_one("#llvm-version-select", Select).value
+            if selected_v == Select.BLANK:
+                selected_v = ""
+        except:
+            # If UI is not ready, use the first discovered version
+            selected_v = self.available_versions[0][1] if hasattr(self, 'available_versions') else ""
+
+        # Try selected version first
+        name = f"{tool_name}{selected_v}"
+        if shutil.which(name):
+            return name
+
+        # Fallback to any available version in our discovered list
+        for _, v in self.available_versions:
             name = f"{tool_name}{v}"
-            try:
-                subprocess.run([name, "--version"], capture_output=True)
+            if shutil.which(name):
                 return name
-            except FileNotFoundError:
-                continue
+        
         return tool_name
 
 
