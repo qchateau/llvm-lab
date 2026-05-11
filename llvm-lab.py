@@ -151,6 +151,7 @@ class PipelineEditor(Vertical):
             yield Button("O3", id="preset-O3", classes="preset-btn")
             yield Button("Os", id="preset-Os", classes="preset-btn")
         tree = Tree("Pipeline", id="pipeline-tree")
+        tree.can_focus = False
         tree.root.allow_expand = False
         yield tree
         with Horizontal(id="pipeline-add-row"):
@@ -479,6 +480,9 @@ class LLVMLabApp(App):
         self.refresh_files()
         self.set_interval(2.0, self.refresh_files)
 
+        # Focus the pass name input
+        self.query_one("#new-pass-name", PassInput).focus()
+
         # Load pipeline from cache if it exists, else default O1
         pipeline_file = CACHE_DIR / "pipeline.ll"
         if pipeline_file.exists():
@@ -562,15 +566,6 @@ class LLVMLabApp(App):
             self.query_one("#new-pass-name", Input).value = node.data.name
 
     def on_key(self, event) -> None:
-        focused = self.focused
-        
-        # If typing while tree is focused, switch focus to input
-        if focused and focused.id == "pipeline-tree" and event.is_printable and len(event.key) == 1:
-            input_box = self.query_one("#new-pass-name", PassInput)
-            input_box.focus()
-            # The character will be handled by the Input widget now that it's focused
-            return
-
         if event.key == "space":
             self.action_toggle_pass()
         elif event.key == "ctrl+up":
