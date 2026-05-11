@@ -93,8 +93,6 @@ class PassInput(Input):
 
 
 def parse_pipeline(s):
-    import re
-
     # Match pass names, parameters in <>, and structural characters ( ) ,
     tokens = re.findall(r"[a-zA-Z0-9_-]+|<[^>]+>|\(|\)|,", s)
     pos = 0
@@ -329,6 +327,12 @@ class LLVMLabApp(App):
         self._is_refreshing = False
         self._first_load = True
         self.available_versions = self.discover_llvm_versions()
+        self._tool_cache = {}
+
+    @on(Select.Changed, "#llvm-version-select")
+    def handle_version_change(self) -> None:
+        self._tool_cache.clear()
+        self.log_message(f"[yellow]LLVM version changed, clearing tool cache.[/yellow]")
 
     def discover_llvm_versions(self):
         versions = set()
@@ -556,13 +560,6 @@ class LLVMLabApp(App):
     def handle_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
         node = event.node
         if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
-            self.query_one("#new-pass-name", Input).value = node.data.name
-
-    @on(Tree.NodeSelected)
-    def handle_node_selected(self, event: Tree.NodeSelected) -> None:
-        node = event.node
-        if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
-            # Populate input with node name for potential modification
             self.query_one("#new-pass-name", Input).value = node.data.name
 
     def on_key(self, event) -> None:
@@ -871,16 +868,16 @@ class LLVMLabApp(App):
         out_path = CACHE_DIR / f"{p_src.stem}.so"
 
         llvm_config = self.find_tool("llvm-config")
-        cxxflags = (
-            subprocess.check_output([llvm_config, "--cxxflags"], text=True)
-            .strip()
-            .split()
-        )
-        ldflags = (
-            subprocess.check_output([llvm_config, "--ldflags"], text=True)
-            .strip()
-            .split()
-        )
+
+        async def get_config(flag):
+            proc = await asyncio.create_subprocess_exec(
+                llvm_config, flag, stdout=asyncio.subprocess.PIPE
+            )
+            stdout, _ = await proc.communicate()
+            return stdout.decode().strip().split()
+
+        cxxflags = await get_config("--cxxflags")
+        ldflags = await get_config("--ldflags")
 
         clang_cpp = self.find_tool("clang++")
         cmd = (
@@ -941,29 +938,33 @@ class LLVMLabApp(App):
         return True
 
     def find_tool(self, tool_name):
+        if tool_name in self._tool_cache:
+            return self._tool_cache[tool_name]
+
         try:
             selected_v = self.query_one("#llvm-version-select", Select).value
             if selected_v == Select.BLANK:
                 selected_v = ""
         except:
             # If UI is not ready, use the first discovered version
-            selected_v = self.available_versions[0][1] if hasattr(self, 'available_versions') else ""
+            selected_v = self.available_versions[0][1] if hasattr(self, 'available_versions') and self.available_versions else ""
 
         # Try selected version first
         name = f"{tool_name}{selected_v}"
         if shutil.which(name):
+            self._tool_cache[tool_name] = name
             return name
 
         # Fallback to any available version in our discovered list
         for _, v in self.available_versions:
             name = f"{tool_name}{v}"
             if shutil.which(name):
+                self._tool_cache[tool_name] = name
                 return name
 
+        self._tool_cache[tool_name] = tool_name
         return tool_name
 
-
-import asyncio
 
 if __name__ == "__main__":
     app = LLVMLabApp()
