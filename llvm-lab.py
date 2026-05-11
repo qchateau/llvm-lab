@@ -62,6 +62,10 @@ class PassInput(Input):
         Binding("enter", "modify_pass", "Mod"),
         Binding("ctrl+n", "add_pass", "Add"),
         Binding("delete", "delete_pass", "Del"),
+        Binding("up", "move_cursor_up", "Prev", show=False),
+        Binding("down", "move_cursor_down", "Next", show=False),
+        Binding("ctrl+up", "move_node_up", "Move Up", show=False),
+        Binding("ctrl+down", "move_node_down", "Move Down", show=False),
     ]
 
     def action_modify_pass(self) -> None:
@@ -72,6 +76,20 @@ class PassInput(Input):
 
     def action_delete_pass(self) -> None:
         self.app.handle_remove()
+
+    def action_move_cursor_up(self) -> None:
+        tree = self.app.query_one("#pipeline-tree", Tree)
+        tree.action_cursor_up()
+
+    def action_move_cursor_down(self) -> None:
+        tree = self.app.query_one("#pipeline-tree", Tree)
+        tree.action_cursor_down()
+
+    def action_move_node_up(self) -> None:
+        self.app.handle_move_up()
+
+    def action_move_node_down(self) -> None:
+        self.app.handle_move_down()
 
 
 def parse_pipeline(s):
@@ -530,6 +548,12 @@ class LLVMLabApp(App):
         level = event.button.id.split("-")[1]
         self.run_worker(self.load_preset(level))
 
+    @on(Tree.NodeHighlighted)
+    def handle_node_highlighted(self, event: Tree.NodeHighlighted) -> None:
+        node = event.node
+        if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
+            self.query_one("#new-pass-name", Input).value = node.data.name
+
     @on(Tree.NodeSelected)
     def handle_node_selected(self, event: Tree.NodeSelected) -> None:
         node = event.node
@@ -538,6 +562,15 @@ class LLVMLabApp(App):
             self.query_one("#new-pass-name", Input).value = node.data.name
 
     def on_key(self, event) -> None:
+        focused = self.focused
+        
+        # If typing while tree is focused, switch focus to input
+        if focused and focused.id == "pipeline-tree" and event.is_printable and len(event.key) == 1:
+            input_box = self.query_one("#new-pass-name", PassInput)
+            input_box.focus()
+            # The character will be handled by the Input widget now that it's focused
+            return
+
         if event.key == "space":
             self.action_toggle_pass()
         elif event.key == "ctrl+up":
@@ -545,9 +578,11 @@ class LLVMLabApp(App):
         elif event.key == "ctrl+down":
             self.handle_move_down()
         elif event.key == "delete":
-            # Global delete handles tree deletion if input isn't focused
-            if self.focused and self.focused.id != "new-pass-name":
-                self.action_remove_pass()
+            self.handle_remove()
+        elif event.key == "enter":
+            self.handle_modify_pass()
+        elif event.key == "ctrl+n":
+            self.handle_add_pass()
 
 
     @on(Button.Pressed, "#move-up-btn")
