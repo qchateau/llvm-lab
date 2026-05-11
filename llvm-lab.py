@@ -665,6 +665,8 @@ class LLVMLabApp(App):
         node = event.node
         if node and hasattr(node, "data") and isinstance(node.data, PipelineNode):
             self.query_one("#new-pass-name", Input).value = node.data.name
+            # Auto-focus the input box
+            self.query_one("#new-pass-name", PassInput).focus()
 
     def on_key(self, event) -> None:
         if event.key == "space":
