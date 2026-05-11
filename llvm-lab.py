@@ -57,6 +57,23 @@ class PipelineNode:
         return self.name + self.params
 
 
+class PassInput(Input):
+    BINDINGS = [
+        Binding("enter", "modify_pass", "Mod"),
+        Binding("ctrl+n", "add_pass", "Add"),
+        Binding("delete", "delete_pass", "Del"),
+    ]
+
+    def action_modify_pass(self) -> None:
+        self.app.handle_modify_pass()
+
+    def action_add_pass(self) -> None:
+        self.app.handle_add_pass()
+
+    def action_delete_pass(self) -> None:
+        self.app.handle_remove()
+
+
 def parse_pipeline(s):
     import re
 
@@ -119,7 +136,7 @@ class PipelineEditor(Vertical):
         tree.root.allow_expand = False
         yield tree
         with Horizontal(id="pipeline-add-row"):
-            yield Input(placeholder="pass-name", id="new-pass-name")
+            yield PassInput(placeholder="pass-name", id="new-pass-name")
             yield Button("ADD", id="add-pass-btn")
             yield Button("MOD", id="modify-pass-btn")
             yield Button("DEL", id="remove-pass-btn")
@@ -266,7 +283,11 @@ class LLVMLabApp(App):
         Binding("space", "toggle_pass", "Toggle Pass"),
         Binding("ctrl+up", "move_up", "Move Pass Up"),
         Binding("ctrl+down", "move_down", "Move Pass Down"),
+        Binding("delete", "remove_pass", "Delete Pass", show=False),
     ]
+
+    def action_remove_pass(self) -> None:
+        self.handle_remove()
 
     def action_toggle_pass(self) -> None:
         tree = self.query_one("#pipeline-tree", Tree)
@@ -523,6 +544,10 @@ class LLVMLabApp(App):
             self.handle_move_up()
         elif event.key == "ctrl+down":
             self.handle_move_down()
+        elif event.key == "delete":
+            # Global delete handles tree deletion if input isn't focused
+            if self.focused and self.focused.id != "new-pass-name":
+                self.action_remove_pass()
 
 
     @on(Button.Pressed, "#move-up-btn")
@@ -612,7 +637,11 @@ class LLVMLabApp(App):
         tree = self.query_one("#pipeline-tree", Tree)
         node = tree.cursor_node
         if node and node.parent and node.parent.data:
-            idx = node.parent.children.index(node)
+            try:
+                idx = node.parent.children.index(node)
+            except ValueError:
+                return  # Node might be stale
+            
             node.parent.data.children.pop(idx)
             self.rebuild_node(node.parent)
 
