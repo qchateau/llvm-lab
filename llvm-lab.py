@@ -263,6 +263,7 @@ class LLVMLabApp(App):
 
     def __init__(self):
         super().__init__()
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
         self.selected_source = None
         self.selected_plugins = []
         self.manifest = self.load_manifest()
