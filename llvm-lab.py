@@ -530,7 +530,11 @@ class LLVMLabApp(App):
         tree = self.query_one("#pipeline-tree", Tree)
         node = tree.cursor_node
         if node and node.parent and node.parent.data:
-            idx = node.parent.children.index(node)
+            try:
+                idx = node.parent.children.index(node)
+            except ValueError:
+                return  # Node might be stale due to rapid movement
+
             if idx > 0:
                 # Swap in data model
                 p_node = node.parent.data
@@ -567,7 +571,11 @@ class LLVMLabApp(App):
         tree = self.query_one("#pipeline-tree", Tree)
         node = tree.cursor_node
         if node and node.parent and node.parent.data:
-            idx = node.parent.children.index(node)
+            try:
+                idx = node.parent.children.index(node)
+            except ValueError:
+                return  # Node might be stale due to rapid movement
+
             if idx < len(node.parent.children) - 1:
                 # Swap in data model
                 p_node = node.parent.data
