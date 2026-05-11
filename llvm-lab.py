@@ -273,6 +273,20 @@ class LLVMLabApp(App):
         height: 1fr;
         border: solid $primary;
     }
+    #ir-viewer-header {
+        height: auto;
+        padding: 0 1;
+        background: $surface;
+        align: left middle;
+        border-bottom: solid $primary;
+    }
+    #ir-viewer-header Label {
+        padding-top: 1;
+        margin-right: 1;
+    }
+    #function-select {
+        width: 40;
+    }
     #run-row {
         height: auto;
         margin-top: 1;
@@ -328,6 +342,89 @@ class LLVMLabApp(App):
         self._first_load = True
         self.available_versions = self.discover_llvm_versions()
         self._tool_cache = {}
+        self.current_ir_file = None
+
+    @on(Select.Changed, "#function-select")
+    def handle_function_change(self) -> None:
+        self.update_ir_viewer()
+
+    def update_ir_viewer(self):
+        if not self.current_ir_file or not self.current_ir_file.exists():
+            return
+
+        try:
+            func_select = self.query_one("#function-select", Select)
+            selected_func = func_select.value
+        except:
+            selected_func = Select.BLANK
+
+        content = self.current_ir_file.read_text()
+        
+        if selected_func != Select.BLANK:
+            # Extract specific function. Use a more robust approach to find the function body.
+            # We look for the 'define' line, then consume until the matching closing brace.
+            content = self.current_ir_file.read_text()
+            
+            # Find the start of the function definition
+            start_marker = f"define .* @{re.escape(selected_func)}\\("
+            start_match = re.search(start_marker, content)
+            
+            if start_match:
+                # Find the start position of the body
+                body_start = content.find("{", start_match.start())
+                if body_start != -1:
+                    # Count braces to find the matching '}'
+                    brace_count = 0
+                    body_end = -1
+                    for i in range(body_start, len(content)):
+                        if content[i] == "{":
+                            brace_count += 1
+                        elif content[i] == "}":
+                            brace_count -= 1
+                            if brace_count == 0:
+                                body_end = i + 1
+                                break
+                    
+                    if body_end != -1:
+                        display_content = content[start_match.start():body_end]
+                    else:
+                        display_content = content[start_match.start():]
+                else:
+                    display_content = content[start_match.start():]
+            else:
+                display_content = f"; Warning: Function '@{selected_func}' not found in the current IR."
+        else:
+            display_content = content
+
+        ir_view = self.query_one("#ir-view", Static)
+        ir_view.update(Syntax(display_content, "llvm", theme="monokai", line_numbers=True))
+
+    def refresh_function_list(self, ir_file):
+        if not ir_file or not ir_file.exists():
+            return
+
+        content = ir_file.read_text()
+        import re
+        # Find all define ... @funcname(...)
+        functions = re.findall(r"^define\s+.*?@([a-zA-Z_][a-zA-Z0-9_.]*)\(", content, re.MULTILINE)
+        
+        func_select = self.query_one("#function-select", Select)
+        current_selection = func_select.value
+        
+        options = [(f"@{f}", f) for f in functions]
+        if not options:
+            options = [("No functions found", "")]
+        
+        func_select.set_options(options)
+        
+        # Try to restore selection
+        if current_selection in functions:
+            func_select.value = current_selection
+        elif functions:
+            # If current selection is gone or blank, pick first one
+            func_select.value = functions[0]
+        
+        self.update_ir_viewer()
 
     @on(Select.Changed, "#llvm-version-select")
     def handle_version_change(self) -> None:
@@ -452,7 +549,11 @@ class LLVMLabApp(App):
                                 )
 
             with TabPane("IR VIEWER", id="ir-tab"):
-                yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
+                with Vertical():
+                    with Horizontal(id="ir-viewer-header"):
+                        yield Label("FUNCTION:")
+                        yield Select([], id="function-select", prompt="Choose a function...", allow_blank=True)
+                    yield ScrollableContainer(Static(id="ir-view"), id="ir-container")
 
             with TabPane("DETAILED LOGS", id="logs-tab"):
                 yield RichLog(id="log-view", highlight=True, markup=True, wrap=True)
@@ -467,6 +568,9 @@ class LLVMLabApp(App):
                 f"[bold cyan]{event.path.name}[/bold cyan]"
             )
             self.log_message(f"[green]Selected source:[/green] {event.path.name}")
+            if event.path.suffix == ".ll":
+                self.current_ir_file = event.path
+                self.refresh_function_list(event.path)
 
     @on(SelectionList.SelectedChanged)
     def handle_plugin_selection(self, event: SelectionList.SelectedChanged) -> None:
@@ -911,9 +1015,8 @@ class LLVMLabApp(App):
         cmd.extend([str(ir_file), "-S", "-o", str(out_path)])
 
         if await self.exec_cmd(cmd):
-            content = out_path.read_text()
-            ir_view = self.query_one("#ir-view", Static)
-            ir_view.update(Syntax(content, "llvm", theme="monokai", line_numbers=True))
+            self.current_ir_file = out_path
+            self.refresh_function_list(out_path)
             return out_path
         return None
 
