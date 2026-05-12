@@ -1,4 +1,7 @@
 compile_commands.json
 
+code/
+plugins/
+
 .venv/
 .build_cache/
